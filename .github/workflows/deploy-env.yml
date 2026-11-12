@@ -37,6 +37,10 @@ jobs:
           private_key_file = "$HOME/.snowflake/deploy.p8"
           TOML
           chmod 600 ~/.snowflake/connections.toml
+      # The change history gets its own schema. schemachange creates the
+      # history table's schema before it runs any script, so a history table
+      # in OPS would create OPS without managed access, and V1.1.0's
+      # CREATE SCHEMA IF NOT EXISTS would then leave it that way.
       - name: schemachange deploy
         run: |
           ENV_UPPER=$(echo "${{ inputs.env }}" | tr a-z A-Z)
@@ -45,5 +49,5 @@ jobs:
             --config-file-name schemachange-database.yml \
             --connections-file-path ~/.snowflake/connections.toml \
             --connection-name ridgeline \
-            --change-history-table "RIDGELINE_${ENV_UPPER}.OPS.SCHEMACHANGE_HISTORY" \
+            --change-history-table "RIDGELINE_${ENV_UPPER}.SCHEMACHANGE.CHANGE_HISTORY" \
             --vars "$(cat deploy/envs/${{ inputs.env }}.json)"

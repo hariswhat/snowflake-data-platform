@@ -2,9 +2,13 @@
 -- underlying objects stay hidden from consumers; the region filter is the
 -- row access policy on each view, the PII masking comes from the tags on
 -- CORE.DIM_CUSTOMER. Repeatable: rerun when this file changes.
+--
+-- The policy is part of each CREATE, not a separate ALTER, so a replaced
+-- view is never readable without it, even briefly or after a failed deploy.
 
 -- Daily sales: a dynamic table, refreshed by Snowflake within its target lag
--- (ADR-0002). Region and category are as they were when the order was placed.
+-- (ADR-0002). Region is the customer's when the order was placed; category is
+-- the product's current one, because products are type 1 (ADR-0003).
 CREATE OR REPLACE DYNAMIC TABLE CORE.DAILY_SALES
     TARGET_LAG = '2 hours'
     WAREHOUSE = WH_{{ env }}_TRANSFORM
@@ -14,14 +18,14 @@ AS
 {% include "modules/daily_sales.sql" %};
 
 CREATE OR REPLACE SECURE VIEW MART.DAILY_SALES
+    WITH ROW ACCESS POLICY GOVERNANCE.RAP_REGION ON (region)
     COMMENT = 'Net sales by day, region and category'
 AS
 SELECT order_date, region, category, orders, units, net_sales
 FROM CORE.DAILY_SALES;
 
-ALTER VIEW MART.DAILY_SALES ADD ROW ACCESS POLICY GOVERNANCE.RAP_REGION ON (region);
-
 CREATE OR REPLACE SECURE VIEW MART.ORDER_LINE
+    WITH ROW ACCESS POLICY GOVERNANCE.RAP_REGION ON (region)
     COMMENT = 'Order lines with the customer and product as they were at order time'
 AS
 SELECT
@@ -47,14 +51,11 @@ INNER JOIN CORE.DIM_CUSTOMER AS c
 INNER JOIN CORE.DIM_PRODUCT AS p
     ON p.product_key = f.product_key;
 
-ALTER VIEW MART.ORDER_LINE ADD ROW ACCESS POLICY GOVERNANCE.RAP_REGION ON (region);
-
 CREATE OR REPLACE SECURE VIEW MART.CUSTOMER
+    WITH ROW ACCESS POLICY GOVERNANCE.RAP_REGION ON (region)
     COMMENT = 'Current customer attributes; email and name masked by tag'
 AS
 SELECT customer_id, email, full_name, region, loyalty_tier, signup_date
 FROM CORE.DIM_CUSTOMER
 WHERE is_current
   AND customer_key <> -1;
-
-ALTER VIEW MART.CUSTOMER ADD ROW ACCESS POLICY GOVERNANCE.RAP_REGION ON (region);

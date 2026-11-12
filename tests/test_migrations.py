@@ -11,7 +11,7 @@ import pytest
 import sqlglot
 import yaml
 
-from sim.engine import CONFIG, DQ, MIGRATIONS, ROOT, TASKS, TRANSFORM, load_checks, render, to_duckdb
+from sim.engine import CONFIG, DQ, MIGRATIONS, ROOT, SCHEMAS, TASKS, TRANSFORM, load_checks, render, to_duckdb
 from sim.sqlsplit import split
 
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
@@ -25,6 +25,16 @@ def env_vars(env: str) -> dict:
     )
 
 
+# sqlglot does not parse a row access policy inside CREATE VIEW; the clause is
+# removed before parsing or running a view on DuckDB. The governance test
+# checks it is there.
+RAP_CLAUSE = re.compile(r"\n\s*WITH ROW ACCESS POLICY \S+ ON \([^)]*\)")
+
+
+def without_policy(stmt: str) -> str:
+    return RAP_CLAUSE.sub("", stmt)
+
+
 def statements(folder: Path, env: str = "dev") -> list[tuple[str, str]]:
     return [(f.name, s) for f in sorted(folder.glob("*.sql")) for s in split(render(f, env_vars(env)))]
 
@@ -34,7 +44,7 @@ def statements(folder: Path, env: str = "dev") -> list[tuple[str, str]]:
 def test_every_script_renders_and_parses(folder, env):
     """StrictUndefined: a variable missing from the environment's file fails here."""
     for name, stmt in statements(folder, env):
-        expr = sqlglot.parse_one(stmt, read="snowflake")
+        expr = sqlglot.parse_one(without_policy(stmt), read="snowflake")
         if re.match(r"(CREATE (OR REPLACE )?(TABLE|SECURE VIEW|VIEW)|INSERT|MERGE|UPDATE|SELECT)\b", stmt, re.I):
             assert not isinstance(expr, sqlglot.exp.Command), (name, stmt[:80])
 
@@ -161,7 +171,7 @@ def test_mart_views_run_on_the_pipeline_output(pipeline):
             for sql in to_duckdb("CREATE OR REPLACE VIEW CORE.DAILY_SALES AS " + query):
                 con.execute(sql)
         elif stmt.startswith("CREATE OR REPLACE SECURE VIEW"):
-            for sql in to_duckdb(stmt):
+            for sql in to_duckdb(without_policy(stmt)):
                 con.execute(sql)
     for view in ("MART.DAILY_SALES", "MART.ORDER_LINE", "MART.CUSTOMER"):
         assert con.execute(f"SELECT COUNT(*) FROM {view}").fetchone()[0] > 0, view
@@ -173,3 +183,32 @@ def test_transforms_are_the_same_files_the_tasks_include():
     assert sorted(f for _, f, _ in TASKS) == sorted(
         p.name for p in TRANSFORM.glob("*.sql") if p.name != "daily_sales.sql"
     )
+
+
+def test_change_history_is_outside_the_managed_schemas():
+    # schemachange creates the history table's schema before any script runs;
+    # in a managed-access schema that would pre-empt V1.1.0's CREATE SCHEMA.
+    wf = (ROOT / ".github" / "workflows" / "deploy-env.yml").read_text()
+    (table,) = re.findall(r'--change-history-table "([^"]+)"', wf)
+    schema = table.split(".")[1]
+    assert schema not in SCHEMAS
+
+
+def test_governance_covers_every_mart_view_and_schema():
+    stmts = [s for _, s in statements(MIGRATIONS)]
+    views = [s for s in stmts if s.startswith("CREATE OR REPLACE SECURE VIEW MART.")]
+    assert len(views) == 3
+    for v in views:
+        head = v.split("\nAS\n", 1)[0]
+        assert "WITH ROW ACCESS POLICY GOVERNANCE.RAP_REGION ON (region)" in head, head
+    # nothing in MART is a plain view or a table, which would bypass the policy
+    assert not [s for s in stmts if re.match(r"CREATE (OR REPLACE )?(VIEW|TABLE) (IF NOT EXISTS )?MART\.", s)]
+    for s in stmts:
+        if s.startswith("CREATE SCHEMA"):
+            assert "WITH MANAGED ACCESS" in s, s
+    tagged = {
+        m.group(1).lower()
+        for s in stmts
+        if (m := re.match(r"ALTER TABLE CORE\.DIM_CUSTOMER MODIFY COLUMN (\w+) SET TAG GOVERNANCE\.PII", s))
+    }
+    assert tagged == {"email", "full_name"}
