@@ -22,6 +22,8 @@ jobs:
       - run: python -m pytest
       # The full 90 days on DuckDB; exits 1 if an error-severity check fails on any day.
       - run: python -m sim.run --days 90 --scale 1.0 > sim-summary.json
+      # The README's pipeline numbers come from this file (tests/test_readme.py).
+      - run: diff docs/measured/sim-90d.json sim-summary.json
       - uses: actions/upload-artifact@v4
         with:
           name: sim-summary

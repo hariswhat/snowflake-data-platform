@@ -1,0 +1,18 @@
+{
+  "cancelled_orders": 2002,
+  "customer_changes": 1475,
+  "customer_rows": 4548,
+  "customers": 3000,
+  "days": 90,
+  "duplicate_events": 812,
+  "files": 1894,
+  "late_customers": 22,
+  "order_events": 158634,
+  "order_lines": 80867,
+  "orders": 40500,
+  "out_of_order_customer_rows": 73,
+  "price_changes": 360,
+  "products": 400,
+  "status_before_created_orders": 401,
+  "unknown_product_lines": 151
+}

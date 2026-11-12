@@ -5,3 +5,4 @@ __pycache__/
 landing/
 *.p8
 connections.toml
+sim-summary.json

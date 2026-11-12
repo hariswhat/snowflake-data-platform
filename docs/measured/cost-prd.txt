@@ -1,0 +1,9 @@
+transform: task graph                                 15.8
+transform: dynamic table refresh                      12.0
+bi                                                   365.0
+adhoc                                                 10.0
+not incurred: alerts on the transform warehouse       25.2
+
+transform total                                       27.8   monitor quota 40
+bi                                                   365.0   monitor quota 400
+adhoc                                                 10.0   monitor quota 20
