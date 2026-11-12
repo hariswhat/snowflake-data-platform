@@ -3,7 +3,9 @@ name: admin
 # Account-level objects: roles, warehouses, resource monitors, the database,
 # integrations (migrations/admin). Run by hand for one environment, with a
 # user that holds SECURITYADMIN, SYSADMIN and ACCOUNTADMIN; the environment
-# admin-<env> has required reviewers. docs/runbook section 1.
+# admin-<env> has required reviewers. WH_RIDGELINE_ADMIN runs schemachange's
+# own queries; it is created by hand with RIDGELINE_ADMIN (docs/runbook
+# section 1), because the scripts here create the other warehouses.
 on:
   workflow_dispatch:
     inputs:
@@ -34,6 +36,7 @@ jobs:
           account = "${{ vars.SNOWFLAKE_ACCOUNT }}"
           user = "SVC_RIDGELINE_ADMIN"
           role = "ACCOUNTADMIN"
+          warehouse = "WH_RIDGELINE_ADMIN"
           authenticator = "SNOWFLAKE_JWT"
           private_key_file = "$HOME/.snowflake/admin.p8"
           TOML

@@ -68,15 +68,21 @@ INNER JOIN SNOWFLAKE.ACCOUNT_USAGE.PIPES AS p
 WHERE p.pipe_catalog = 'RIDGELINE_{{ env }}'
 GROUP BY 1, 2;
 
--- Alerts. Each checks hourly and e-mails when its query returns rows. They
--- are serverless (no WAREHOUSE): on the transform warehouse each check would
--- resume it and pay the 60-second minimum, 48 times a day, which costs more
--- than the task graph (docs/cost-estimate.md).
+-- Alerts. Each checks hourly and e-mails when its query returns rows. Each
+-- looks at what finished since its last successful check (the last hour on
+-- its first check), by completion time: a task scheduled before the last
+-- check can fail after it. They are serverless (no WAREHOUSE): on the
+-- transform warehouse each check could resume it and pay the 60-second
+-- minimum, up to 48 times a day (docs/cost-estimate.md).
 CREATE OR REPLACE ALERT OPS.ALERT_TASK_FAILURE
     SCHEDULE = '60 MINUTE'
     IF (EXISTS (
         SELECT 1 FROM OPS.TASK_FAILURE
-        WHERE scheduled_time > SNOWFLAKE.ALERT.LAST_SUCCESSFUL_SCHEDULED_TIME()
+        WHERE completed_time > COALESCE(
+                SNOWFLAKE.ALERT.LAST_SUCCESSFUL_SCHEDULED_TIME()
+                , DATEADD(HOUR, -1, SNOWFLAKE.ALERT.SCHEDULED_TIME())
+            )
+          AND completed_time <= SNOWFLAKE.ALERT.SCHEDULED_TIME()
     ))
     THEN
         CALL SYSTEM$SEND_EMAIL(
@@ -90,7 +96,11 @@ CREATE OR REPLACE ALERT OPS.ALERT_PIPE_LOAD_ERROR
     SCHEDULE = '60 MINUTE'
     IF (EXISTS (
         SELECT 1 FROM OPS.PIPE_LOAD_ERROR
-        WHERE last_load_time > SNOWFLAKE.ALERT.LAST_SUCCESSFUL_SCHEDULED_TIME()
+        WHERE last_load_time > COALESCE(
+                SNOWFLAKE.ALERT.LAST_SUCCESSFUL_SCHEDULED_TIME()
+                , DATEADD(HOUR, -1, SNOWFLAKE.ALERT.SCHEDULED_TIME())
+            )
+          AND last_load_time <= SNOWFLAKE.ALERT.SCHEDULED_TIME()
     ))
     THEN
         CALL SYSTEM$SEND_EMAIL(

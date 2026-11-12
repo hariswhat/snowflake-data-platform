@@ -1,6 +1,8 @@
 -- One warehouse per workload, each with its own resource monitor (ADR-0005).
 -- Sizes and quotas come from the environment's config (vars); the cost
 -- estimate in docs/cost-estimate.md is computed from the same numbers.
+-- This script runs once; later changes to sizes and quotas are applied by
+-- R__warehouse_sizes_and_quotas.sql.
 USE ROLE SYSADMIN;
 
 CREATE WAREHOUSE IF NOT EXISTS WH_{{ env }}_TRANSFORM

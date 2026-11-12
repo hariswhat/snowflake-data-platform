@@ -207,8 +207,19 @@ def test_governance_covers_every_mart_view_and_schema():
         if s.startswith("CREATE SCHEMA"):
             assert "WITH MANAGED ACCESS" in s, s
     tagged = {
-        m.group(1).lower()
+        (m.group(1), m.group(2).lower())
         for s in stmts
-        if (m := re.match(r"ALTER TABLE CORE\.DIM_CUSTOMER MODIFY COLUMN (\w+) SET TAG GOVERNANCE\.PII", s))
+        if (m := re.match(r"ALTER TABLE (\w+\.\w+) MODIFY COLUMN (\w+) SET TAG GOVERNANCE\.PII", s))
     }
-    assert tagged == {"email", "full_name"}
+    assert tagged == {(t, c) for t in ("CORE.DIM_CUSTOMER", "RAW.CUSTOMER") for c in ("email", "full_name")}
+
+
+def test_row_policy_argument_is_not_a_mapping_column():
+    """An argument named like a column of the mapping table is shadowed by
+    that column inside the policy's subquery, and the filter always passes."""
+    stmts = [s for _, s in statements(MIGRATIONS)]
+    (policy,) = [s for s in stmts if s.startswith("CREATE ROW ACCESS POLICY")]
+    (arg,) = re.findall(r"AS \((\w+) VARCHAR\)", policy)
+    (mapping,) = [s for s in stmts if s.startswith("CREATE TABLE IF NOT EXISTS GOVERNANCE.REGION_ACCESS")]
+    columns = re.findall(r"^\s*,?\s*(\w+) VARCHAR", mapping, re.M)
+    assert columns and arg not in columns
