@@ -1,0 +1,7 @@
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/
+landing/
+*.p8
+connections.toml

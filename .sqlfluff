@@ -1,0 +1,16 @@
+[sqlfluff]
+dialect = snowflake
+templater = raw
+max_line_length = 120
+# Leading commas and the indentation used in this repo are conventions
+# (CONTRIBUTING.md); these rules would fight them.
+exclude_rules = LT01, LT02, LT04, LT05, LT09, ST06, AM04, RF04, CV06, ST05, AL05, AM06, RF02, RF03, CP02, ST09, LT14, ST07
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = upper
+
+[sqlfluff:rules:capitalisation.functions]
+extended_capitalisation_policy = upper
+
+[sqlfluff:rules:aliasing.table]
+aliasing = explicit

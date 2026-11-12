@@ -1,0 +1,6 @@
+duckdb==1.4.4
+Jinja2==3.1.4
+pandas==2.2.3
+pyarrow==18.1.0
+PyYAML==6.0.2
+sqlglot==27.29.0

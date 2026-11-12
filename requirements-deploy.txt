@@ -1,0 +1,2 @@
+# The deploy workflow only. schemachange brings the Snowflake connector.
+schemachange==4.0.1
