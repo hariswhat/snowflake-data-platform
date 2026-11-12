@@ -80,6 +80,19 @@ CREATE TABLE IF NOT EXISTS OPS.LATE_ARRIVAL (
     , logged_at TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
+-- ORDER_CREATED events missing a field the fact requires. They are kept out
+-- of the fact so one bad record does not fail every run of the fact task; a
+-- corrected event re-sent by the shop is loaded normally.
+CREATE TABLE IF NOT EXISTS OPS.REJECTED_EVENT (
+    event_id VARCHAR NOT NULL
+    , order_id VARCHAR NOT NULL
+    , line_number NUMBER(4, 0)
+    , reason VARCHAR NOT NULL
+    , file_name VARCHAR NOT NULL
+    , file_row_number NUMBER(10, 0) NOT NULL
+    , logged_at TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
 CREATE TABLE IF NOT EXISTS OPS.DQ_RESULT (
     run_id VARCHAR NOT NULL
     , check_name VARCHAR NOT NULL

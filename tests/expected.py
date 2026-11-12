@@ -12,7 +12,7 @@ from __future__ import annotations
 import csv
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
@@ -39,6 +39,10 @@ def _days(landing: Path, kind: str) -> list[Path]:
     return sorted(p for p in (landing / kind).glob("*/*/*") if p.is_dir())
 
 
+def _date(p: Path) -> date:
+    return date(int(p.parts[-3]), int(p.parts[-2]), int(p.parts[-1]))
+
+
 def _attrs(r: dict) -> tuple:
     email = (r["email"] or "").strip() or None
     return (
@@ -50,31 +54,43 @@ def _attrs(r: dict) -> tuple:
     )
 
 
-def customers(landing: Path) -> tuple[dict[str, Customer], int]:
+def customers(landing: Path, batches: list[list[date]] | None = None) -> tuple[dict[str, Customer], int]:
+    """One batch per day of CRM files by default, as the simulation loads them;
+    a batch of several days is a task graph that was stopped. Every row newer
+    than the customer's last applied row is applied in timestamp order; an
+    older one is stale and counted, unless the same row was loaded before."""
     out: dict[str, Customer] = {}
     late = 0
-    for day in _days(landing, "customers"):
+    seen: set[tuple[str, datetime]] = set()
+    if batches is None:
+        batches = [[_date(p)] for p in _days(landing, "customers")]
+    for batch in batches:
         rows = []
-        for f in sorted(day.glob("*.csv")):
+        dirs = [landing / "customers" / f"{d:%Y/%m/%d}" for d in batch]
+        for f in sorted(f for day in dirs for f in day.glob("*.csv")):
             with f.open() as fh:
                 for n, r in enumerate(csv.DictReader(fh), start=2):
                     rows.append((datetime.fromisoformat(r["updated_at"]), str(f), n, r))
-        latest: dict[str, tuple] = {}
-        for row in sorted(rows, key=lambda x: (x[0], x[1], x[2])):
-            latest[row[3]["customer_id"]] = row
-        for cid, (ts, _, _, r) in latest.items():
+        # one row per customer and timestamp; on a tie, the later file and row
+        latest: dict[tuple[str, datetime], dict] = {}
+        for ts, _, _, r in sorted(rows, key=lambda x: (x[0], x[1], x[2])):
+            latest[(r["customer_id"], ts)] = r
+        start = {cid: c.source_ts for cid, c in out.items()}
+        for (cid, ts), r in sorted(latest.items(), key=lambda kv: (kv[0][0], kv[0][1])):
             c = out.get(cid)
             a = _attrs(r)
             if c is None:
                 out[cid] = Customer([Version(a, FAR_PAST)], ts)
-            elif ts <= c.source_ts:
-                late += 1
+            elif cid in start and ts <= start[cid]:
+                if (cid, ts) not in seen:
+                    late += 1
             elif a != c.versions[-1].attrs:
                 c.versions[-1].valid_to = ts
                 c.versions.append(Version(a, ts))
                 c.source_ts = ts
             else:
                 c.source_ts = ts
+        seen.update(latest)
     return out, late
 
 

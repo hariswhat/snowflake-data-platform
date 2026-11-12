@@ -8,6 +8,8 @@
 --     SHIPPED
 --   * a line is inserted once, from its ORDER_CREATED event; a re-sent event
 --     matches the existing line and changes nothing
+--   * an ORDER_CREATED event missing a field the fact requires goes to
+--     OPS.REJECTED_EVENT instead, so it cannot fail every run
 --   * a line whose customer or product is not in the dimension yet gets key
 --     -1, and is re-keyed when it arrives
 --   * a customer change can reach the CRM export after orders placed after
@@ -24,6 +26,7 @@ USING (
             WHEN 'SHIPPED' THEN 'SHIPPED'
             WHEN 'CANCELLED' THEN 'CANCELLED'
         END AS status
+        , CASE event_type WHEN 'CANCELLED' THEN 4 WHEN 'SHIPPED' THEN 3 WHEN 'PAID' THEN 2 ELSE 1 END AS step
         , event_ts
         , event_id
     FROM RAW.ORDER_EVENT_STREAM
@@ -31,18 +34,45 @@ USING (
     -- Newest event wins; on a tie, the later step of the order's life.
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY order_id
-        ORDER BY event_ts DESC
-            , CASE event_type WHEN 'CANCELLED' THEN 4 WHEN 'SHIPPED' THEN 3 WHEN 'PAID' THEN 2 ELSE 1 END DESC
-            , event_id DESC
+        ORDER BY event_ts DESC, step DESC, event_id DESC
     ) = 1
 ) AS s
     ON t.order_id = s.order_id
-WHEN MATCHED AND s.event_ts > t.status_ts THEN UPDATE SET
+-- The same rule across batches: a tie on event_ts with the stored status is
+-- broken by the step, whichever event arrived first.
+WHEN MATCHED AND (
+    s.event_ts > t.status_ts
+    OR (
+        s.event_ts = t.status_ts
+        AND s.step > CASE t.status WHEN 'CANCELLED' THEN 4 WHEN 'SHIPPED' THEN 3 WHEN 'PAID' THEN 2 ELSE 1 END
+    )
+) THEN UPDATE SET
     status = s.status
     , status_ts = s.event_ts
     , event_id = s.event_id
 WHEN NOT MATCHED THEN INSERT (order_id, status, status_ts, event_id)
 VALUES (s.order_id, s.status, s.event_ts, s.event_id);
+
+INSERT INTO OPS.REJECTED_EVENT (event_id, order_id, line_number, reason, file_name, file_row_number)
+SELECT
+    event_id
+    , order_id
+    , line_number
+    , 'missing:'
+        || IFF(customer_id IS NULL, ' customer_id', '')
+        || IFF(line_number IS NULL, ' line_number', '')
+        || IFF(product_code IS NULL, ' product_code', '')
+        || IFF(quantity IS NULL, ' quantity', '')
+        || IFF(unit_price IS NULL, ' unit_price', '')
+        || IFF(discount_pct IS NULL, ' discount_pct', '') AS reason
+    , file_name
+    , file_row_number
+FROM RAW.ORDER_EVENT_STREAM
+WHERE event_type = 'ORDER_CREATED'
+  AND (
+      customer_id IS NULL OR line_number IS NULL OR product_code IS NULL
+      OR quantity IS NULL OR unit_price IS NULL OR discount_pct IS NULL
+  );
 
 MERGE INTO CORE.FACT_ORDER_LINE AS f
 USING (
@@ -72,6 +102,12 @@ USING (
     LEFT JOIN CORE.ORDER_STATUS AS st
         ON st.order_id = e.order_id
     WHERE e.event_type = 'ORDER_CREATED'
+      AND e.customer_id IS NOT NULL
+      AND e.line_number IS NOT NULL
+      AND e.product_code IS NOT NULL
+      AND e.quantity IS NOT NULL
+      AND e.unit_price IS NOT NULL
+      AND e.discount_pct IS NOT NULL
     QUALIFY ROW_NUMBER() OVER (PARTITION BY e.order_id, e.line_number ORDER BY e.event_id) = 1
 ) AS s
     ON f.order_id = s.order_id
@@ -98,9 +134,11 @@ WHERE st.order_id = f.order_id
 
 -- Late-arriving dimension data: lines loaded before their customer, or before
 -- a change that was in effect when the order was placed. Only customer
--- versions written in the last seven days can have moved, which keeps this
--- from scanning the whole fact; a pipeline stopped for longer needs the
--- re-key run by hand (docs/runbook section 5).
+-- versions written (changed_at) in the last seven days are considered, which
+-- keeps this from scanning the whole fact. The customer task runs just
+-- before this one, so that covers every version unless this task kept
+-- failing for seven days while the customer task succeeded; then the re-key
+-- is run by hand without the window (docs/runbook section 5).
 UPDATE CORE.FACT_ORDER_LINE AS f
 SET
     customer_key = c.customer_key

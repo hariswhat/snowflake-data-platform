@@ -121,10 +121,47 @@ def test_reprocessing_a_day_changes_nothing(landing):
     for d in days:
         p.load_day(landing, d)
         p.run_dag()
-    snapshot = _core(p)
+    snapshot = _core(p), _late(p)
     p.load_day(landing, days[-1])
     p.run_dag()
-    assert _core(p) == snapshot
+    # CORE is unchanged, and the reloaded CRM rows are not logged as stale
+    assert (_core(p), _late(p)) == snapshot
+
+
+def test_a_stopped_graph_keeps_every_customer_version(landing):
+    """Four days of files in one run (the graph was stopped) give the same
+    versions as the model applying those four days as one batch: no change
+    in the middle of the batch is lost."""
+    from sim.engine import Platform, landing_days
+
+    days = landing_days(landing)
+    batches = [days[:1]] + [days[i : i + 4] for i in range(1, len(days), 4)]
+    p = Platform()
+    for batch in batches:
+        for d in batch:
+            p.load_day(landing, d)
+        p.run_dag()
+    want, late = expected.customers(landing, batches)
+    rows = p.con.execute(
+        "SELECT customer_id, valid_from, valid_to, email, full_name, region, loyalty_tier, "
+        "CAST(signup_date AS VARCHAR) FROM CORE.DIM_CUSTOMER WHERE customer_key <> -1 "
+        "ORDER BY customer_id, valid_from"
+    ).fetchall()
+    got: dict[str, list] = {}
+    for cid, vf, vt, *attrs in rows:
+        got.setdefault(cid, []).append((vf, vt, tuple(attrs)))
+    assert got == {cid: [(v.valid_from, v.valid_to, v.attrs) for v in c.versions] for cid, c in want.items()}
+    assert _late(p) == late
+    # some customer changed more than once within a batch, so the case occurred
+    assert any(
+        sum(1 for v in c.versions if b[0] <= v.valid_from.date() <= b[-1]) > 1 for c in want.values() for b in batches
+    )
+    errors = {c.name for c in load_checks() if c.severity == "error"}
+    assert {k: v for k, v in p.run_checks().items() if k in errors and v} == {}
+
+
+def _late(p):
+    return p.con.execute("SELECT COUNT(*) FROM OPS.LATE_ARRIVAL").fetchone()[0]
 
 
 def _core(p):
@@ -137,3 +174,65 @@ def _core(p):
         ).fetchall(),
         q("SELECT * FROM CORE.ORDER_STATUS ORDER BY ALL").fetchall(),
     )
+
+
+@pytest.mark.parametrize("first, second", [("PAID", "SHIPPED"), ("SHIPPED", "PAID")])
+def test_status_tie_across_batches_goes_to_the_later_step(first, second):
+    """Two events for one order with the same event_ts, in separate runs:
+    the later step wins whichever arrives first, as it does within a batch."""
+    import pandas as pd
+
+    from sim.engine import Platform
+
+    p = Platform()
+    ts = "2026-01-05 10:00:00"
+    for n, event_type in enumerate([first, second], start=1):
+        row = dict.fromkeys(
+            ["customer_id", "channel", "line_number", "product_code", "quantity", "unit_price", "discount_pct"]
+        )
+        row |= {
+            "event_id": f"E{n}",
+            "event_type": event_type,
+            "event_ts": ts,
+            "order_id": "O1",
+            "payload": "{}",
+            "file_name": f"orders/f{n}.json",
+            "file_row_number": 1,
+            "loaded_at": datetime(2026, 1, 5, 11, n),
+        }
+        p._insert("ORDER_EVENT", pd.DataFrame([row]))
+        p.run_dag()
+    assert p.con.execute("SELECT status FROM CORE.ORDER_STATUS WHERE order_id = 'O1'").fetchone()[0] == "SHIPPED"
+
+
+def test_an_incomplete_order_event_is_rejected_not_fatal():
+    """An ORDER_CREATED event without a quantity would break the fact's NOT
+    NULL column and fail every run. It goes to OPS.REJECTED_EVENT instead."""
+    import pandas as pd
+
+    from sim.engine import Platform
+
+    p = Platform()
+    row = {
+        "event_id": "E1",
+        "event_type": "ORDER_CREATED",
+        "event_ts": "2026-01-05 10:00:00",
+        "order_id": "O1",
+        "customer_id": "C000001",
+        "channel": "web",
+        "line_number": 1,
+        "product_code": "P0001",
+        "quantity": None,
+        "unit_price": 10.0,
+        "discount_pct": 0.0,
+        "payload": "{}",
+        "file_name": "orders/f1.json",
+        "file_row_number": 1,
+        "loaded_at": datetime(2026, 1, 5, 11, 0),
+    }
+    p._insert("ORDER_EVENT", pd.DataFrame([row]))
+    p.run_dag()
+    q = p.con.execute
+    assert q("SELECT COUNT(*) FROM CORE.FACT_ORDER_LINE").fetchone()[0] == 0
+    assert q("SELECT event_id, reason FROM OPS.REJECTED_EVENT").fetchall() == [("E1", "missing: quantity")]
+    assert p.run_checks()["ops_rejected_event"] == 1

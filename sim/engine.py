@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import duckdb
@@ -112,6 +112,7 @@ class RunResult:
 class Platform:
     con: duckdb.DuckDBPyConnection = field(default_factory=duckdb.connect)
     offsets: dict[str, int] = field(default_factory=dict)
+    loads: int = 0
 
     def __post_init__(self) -> None:
         for s in SCHEMAS:
@@ -129,7 +130,10 @@ class Platform:
         """What the three pipes' COPY statements insert for one day's files."""
         import pandas as pd
 
-        loaded_at = datetime(d.year, d.month, d.day, 23, 59, 0)
+        # Snowpipe stamps each load with its own time, so a file loaded again
+        # has a later loaded_at than the first load of it, even in the sim.
+        self.loads += 1
+        loaded_at = datetime(d.year, d.month, d.day, 23, 59, 0) + timedelta(microseconds=self.loads)
         counts = {}
         rows = []
         for f in sorted((landing / "orders" / f"{d:%Y/%m/%d}").glob("*.json")):

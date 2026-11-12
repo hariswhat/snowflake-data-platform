@@ -17,3 +17,4 @@ vars:
     - {name: fact_status_matches_order_status, severity: error}
     - {name: fact_unknown_customer_after_two_days, severity: warn}
     - {name: fact_unknown_product, severity: warn}
+    - {name: ops_rejected_event, severity: warn}
