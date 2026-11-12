@@ -22,9 +22,12 @@ ACCOUNT_USAGE delay. Not verified:
 
 - what these functions return inside a view queried by a serverless alert,
   running as the alert's owner;
-- that `COPY_HISTORY` reports a file a pipe skipped with `status <> 'Loaded'`.
+- that `COPY_HISTORY` reports a file a pipe skipped with `status <> 'Loaded'`;
+- what `TASK_HISTORY` returns to an engineer querying the view.
+  `AR_OPS_READ` is granted MONITOR on the tasks for this, on the
+  assumption that the function filters by the caller's privileges.
 
-If either fails, the fallback is ACCOUNT_USAGE views, with up to a few
+If any of these fails, the fallback is ACCOUNT_USAGE views, with up to a few
 hours' delay on alerts.
 
 ## 3. Serverless spend has no hard limit
@@ -57,8 +60,10 @@ empty table means analysts without `_ALL_REGIONS` see no rows.
 
 ## 7. Re-key window and stream staleness are fixed limits
 
-- The fact task re-keys lines for customer versions changed in the last 7
-  days. A graph stopped longer needs the re-key run by hand.
+- The fact task re-keys lines for customer versions written in the last 7
+  days. The customer task runs just before it, so this only misses
+  versions if the fact task keeps failing for 7 days while the customer
+  task succeeds. Then the re-key is run by hand.
 - A stream not consumed within 14 days goes stale.
 
 Both are in runbook section 5, and neither is detected automatically. A
@@ -68,4 +73,23 @@ STREAMS`) would warn before it happens.
 ## 8. One alert recipient, e-mail only
 
 Alerts go to one address per environment, which must be a verified user's
-e-mail. There is no paging integration and no escalation.
+e-mail. There is no paging integration and no escalation. Resource monitor
+notifications go to the users set by hand in `NOTIFY_USERS` (runbook
+section 1), not to that address.
+
+## 9. dev and prd share one account
+
+The deploy roles hold three account-level grants:
+
+- `APPLY MASKING POLICY`, needed to put the policy on the tag;
+- imported privileges on `SNOWFLAKE`, for the cost views;
+- the right to execute tasks and alerts.
+
+The first lets dev's deploy role, which deploys on every push, set or
+unset masking policies anywhere in the account. The second lets it read
+account-wide usage, including prd's query text. Options:
+
+- a separate account for prd;
+- applying the tag's policy from the admin deployment;
+- a monitoring role with `SNOWFLAKE` database roles narrower than imported
+  privileges.

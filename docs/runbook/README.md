@@ -26,9 +26,12 @@ Prerequisites:
 Once per account, as ACCOUNTADMIN, before the first admin deployment:
 
 ```sql
--- Change history for the admin deployment. Created by hand because the
--- admin scripts are what create everything else.
+-- Change history for the admin deployment, and a warehouse for
+-- schemachange's own queries. Created by hand because the admin scripts are
+-- what create everything else.
 CREATE DATABASE IF NOT EXISTS RIDGELINE_ADMIN;
+CREATE WAREHOUSE IF NOT EXISTS WH_RIDGELINE_ADMIN
+    WAREHOUSE_SIZE = XSMALL AUTO_SUSPEND = 60 INITIALLY_SUSPENDED = TRUE;
 
 -- Service users, key-pair auth only. Paste the public keys.
 CREATE USER IF NOT EXISTS SVC_RIDGELINE_ADMIN TYPE = SERVICE RSA_PUBLIC_KEY = '<key>';
@@ -65,7 +68,16 @@ Then, per environment:
      way. Then give its app the **Storage Queue Data Message Processor**
      role on the queue.
 4. Have the owner of `alert_email` verify that address in Snowsight.
-   `SYSTEM$SEND_EMAIL` sends only to verified addresses.
+   `SYSTEM$SEND_EMAIL` sends only to verified addresses. Resource monitor
+   notifications go only to account administrators who opted in, and to
+   users named on the monitor. As ACCOUNTADMIN, name the on-call users
+   (they also need verified e-mail addresses):
+
+   ```sql
+   ALTER RESOURCE MONITOR RM_<ENV>_TRANSFORM SET NOTIFY_USERS = (<user>, <user>);
+   ALTER RESOURCE MONITOR RM_<ENV>_BI SET NOTIFY_USERS = (<user>, <user>);
+   ALTER RESOURCE MONITOR RM_<ENV>_ADHOC SET NOTIFY_USERS = (<user>, <user>);
+   ```
 5. Run **deploy**: a push to `main`, or run it by hand. It creates the
    schemas, tables, pipes, streams, tasks, views and alerts, and resumes
    the task graph and the alerts.
@@ -79,7 +91,10 @@ Then, per environment:
    ```
 
    `REFRESH` queues files staged in the last 7 days only. Older files need
-   a `COPY INTO` with the pipe's SELECT (section 4, step 3).
+   a one-off `COPY INTO RAW.<T>` with the same SELECT as the pipe's
+   definition (V1.1.1), on `WH_<ENV>_ADHOC`. Restrict it with `PATTERN`
+   to folders older than 7 days. A pipe's load history and a COPY's are
+   kept separately, so a file in both ranges would load twice.
 7. Add region mappings (section 7).
 
 Check: `SELECT SYSTEM$PIPE_STATUS('RAW.PIPE_ORDER_EVENT');` shows
@@ -104,7 +119,13 @@ ORDER BY severity, check_name;
 
 -- Stale CRM rows skipped since yesterday (section 6 if one matters)
 SELECT * FROM OPS.LATE_ARRIVAL WHERE logged_at >= DATEADD(DAY, -1, CURRENT_TIMESTAMP());
+
+-- Order events kept out of the fact (a required field missing)
+SELECT * FROM OPS.REJECTED_EVENT WHERE logged_at >= DATEADD(DAY, -1, CURRENT_TIMESTAMP());
 ```
+
+A rejected event is the shop's to fix. When it re-sends the order with the
+field filled in and a new event id, the line is loaded normally.
 
 `OPS.TASK_RUN` reads ACCOUNT_USAGE and can be a few hours behind. For the
 last hour, use `OPS.TASK_FAILURE`.
@@ -120,10 +141,12 @@ last hour, use `OPS.TASK_FAILURE`.
 3. **Any other task**: its transaction rolled back, and its stream still
    holds the rows. Fix the cause and merge. The next hourly run processes
    the same rows plus the new ones. Nothing needs rerunning by hand.
-4. After three failures in a row, the root suspends itself. Once the fix
-   is deployed, `R__tasks.sql` resumes it. Without a deploy:
+4. After three failures in a row, the root suspends itself. A deploy
+   resumes it only if it changes `R__tasks.sql` or a transform. After any
+   other fix (data, a versioned script), resume it by hand:
    `SELECT SYSTEM$TASK_DEPENDENTS_ENABLE('CORE.T_ROOT');`
-5. If the graph was down for more than 7 days, see section 5.
+5. If the graph was down for more than 14 days, or the fact task failed
+   for more than 7 while the customer task ran, see section 5.
 
 ### "file not loaded"
 
@@ -139,15 +162,20 @@ last hour, use `OPS.TASK_FAILURE`.
 
 - **Database objects**: merge to `main`. `deploy.yml` runs CI, deploys
   dev, then waits for approval to deploy prd.
-- **The task graph**: `R__tasks.sql` reruns whenever it or any transform
-  changes. It suspends the root, recreates every task, and resumes the
-  graph. A graph run already in progress finishes on the old definitions.
-  Expect one skipped hour at most.
+- **The task graph**: `R__tasks.sql` reruns whenever its rendered text
+  changes, which includes any transform it includes. It suspends the root,
+  recreates every task, and resumes the graph. A graph run already in
+  progress finishes on the old definitions. Expect one skipped hour at
+  most. A deploy that does not change it leaves the graph as it was,
+  suspended or not.
 - **The dynamic table**: `R__mart.sql` recreates `CORE.DAILY_SALES`, and
   its first refresh after that is a full one.
-- **Account objects** (warehouse size, quotas, new role): change
-  `migrations/admin` or `deploy/envs/<env>.json`, merge, then run
-  **admin** for each environment.
+- **Account objects**: merge, then run **admin** for each environment.
+  - A warehouse size or a monitor quota is a change to
+    `deploy/envs/<env>.json`. `R__warehouse_sizes_and_quotas.sql` applies
+    it.
+  - Anything else (a new role, a new warehouse) is a new versioned script
+    in `migrations/admin`.
 - **A policy body**: a new versioned script with `ALTER ... SET BODY`
   (CONTRIBUTING).
 
@@ -156,32 +184,43 @@ a new versioned script for anything else.
 
 ## 4. Changing a pipe
 
-A pipe's COPY cannot be altered. To add a column:
+A pipe's COPY cannot be altered; the pipe is replaced. A replaced pipe
+starts with no queue and no load history, so the steps make sure no file is
+missed or loaded twice. To add a column:
 
-1. A new versioned script:
-   - `ALTER TABLE RAW.<T> ADD COLUMN ...`;
-   - `ALTER PIPE RAW.PIPE_<T> SET PIPE_EXECUTION_PAUSED = TRUE`;
-   - `CREATE OR REPLACE PIPE ...` with the new SELECT.
-
-   The stream and the table keep their data.
-2. Deploy. While the pipe is paused, new files queue up.
-3. Load the gap: `ALTER PIPE RAW.PIPE_<T> REFRESH;` queues files from the
-   last 7 days. The new pipe has no load history, so files the old pipe
-   loaded in that window load **again**, and RAW gets duplicates. The
-   transforms deduplicate, and `test_reprocessing_a_day_changes_nothing`
-   shows CORE does not change. To keep RAW clean instead:
-   `REFRESH PREFIX = '<path after the cut-over>'`.
-4. Backfill the new column for old rows from `payload` if needed (orders
+1. Pause the pipe and note the time:
+   `ALTER PIPE RAW.PIPE_<T> SET PIPE_EXECUTION_PAUSED = TRUE;`
+2. Wait until `SELECT SYSTEM$PIPE_STATUS('RAW.PIPE_<T>');` shows
+   `pendingFileCount` 0. Files arriving now are not loaded.
+3. Deploy a new versioned script that adds the column to `RAW.<T>`
+   (`ALTER TABLE ... ADD COLUMN`) and replaces the pipe
+   (`CREATE OR REPLACE PIPE ...` with the new SELECT). The table and its
+   stream keep their data and offset. The new pipe starts running.
+4. Load what arrived since step 1:
+   `ALTER PIPE RAW.PIPE_<T> REFRESH MODIFIED_AFTER = '<time from step 1>';`
+   This only reaches back 7 days. A longer pause needs a one-off COPY
+   (section 1, step 6).
+5. Backfill the new column for old rows from `payload` if needed (orders
    only; CSV sources have no payload).
+6. Check `SYSTEM$PIPE_STATUS` again and, after the next file,
+   `OPS.PIPE_LOAD_ERROR`.
+
+If rows do load twice (a refresh without `MODIFIED_AFTER`, or a manual
+`COPY ... FORCE = TRUE`), RAW has duplicates and CORE does not change: the
+transforms deduplicate, and `test_reprocessing_a_day_changes_nothing`
+checks that.
 
 ## 5. A stopped task graph, stale streams, reload from RAW
 
-**Down for up to 7 days.** Resume (section 2, step 4). The next run
-processes everything in the streams in one batch, and the newest row per
-customer wins within it.
+**Down for up to 14 days.** Resume (section 2, step 4). The next run
+processes everything in the streams in one batch. Every customer change in
+it becomes a version, in timestamp order. The customer task writes those
+versions just before the fact task runs, so the fact's re-key covers them.
 
-**Down for 8 to 14 days.** Resume, then run the fact re-key without its
-window. It runs once, as an engineer, on `WH_<ENV>_ADHOC`:
+**The fact task failed for more than 7 days while the customer task ran.**
+This can happen if the root was resumed by hand repeatedly. The re-key only
+looks at customer versions written in the last 7 days, so run it once
+without the window, as an engineer, on `WH_<ENV>_ADHOC`:
 
 ```sql
 UPDATE CORE.FACT_ORDER_LINE AS f
@@ -237,7 +276,9 @@ history (for example, a region move that was entered late):
 ## 7. Granting access
 
 People get functional roles. Never grant objects directly. Managed access
-rejects it anyway. As SECURITYADMIN:
+stops object owners other than the schema owner from granting, but
+SECURITYADMIN can still grant, so this is a rule for admins to keep. As
+SECURITYADMIN:
 
 | Need | Grant |
 | --- | --- |

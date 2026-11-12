@@ -10,7 +10,7 @@
   "dim_product_rows": 400,
   "fact_order_lines": 80867,
   "orders": 40500,
-  "late_customer_rows_skipped": 72,
+  "late_customer_rows_skipped": 73,
   "lines_on_unknown_customer": 0,
   "lines_on_unknown_product": 151,
   "net_sales_excl_cancelled": 57412014.97,
@@ -42,6 +42,10 @@
     "fact_unknown_product": {
       "severity": "warn",
       "failing_rows": 151
+    },
+    "ops_rejected_event": {
+      "severity": "warn",
+      "failing_rows": 0
     }
   },
   "dq_error_failures_any_run": 0

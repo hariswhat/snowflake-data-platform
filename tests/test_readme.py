@@ -77,12 +77,11 @@ def test_readme_cost_table_matches_the_model():
     assert f"| {transform:.1f} |" in README
     assert f"| {c['bi']:.1f} |" in README
     assert f"| {c['adhoc']:.1f} |" in README
-    assert f"cost {c['not incurred: alerts on the transform warehouse']} credits a month" in README
+    assert f"cost up to {c['not incurred: alerts on the transform warehouse']} credits a month" in README
 
 
 def test_pipeline_and_model_agree_with_the_planted_counts():
-    # every planted stale row is logged, except those beaten within their batch
-    assert SIM["late_customer_rows_skipped"] <= LANDING["out_of_order_customer_rows"]
+    assert SIM["late_customer_rows_skipped"] == LANDING["out_of_order_customer_rows"]
     assert SIM["fact_order_lines"] == LANDING["order_lines"]
     assert SIM["orders"] == LANDING["orders"]
     assert SIM["lines_on_unknown_product"] == LANDING["unknown_product_lines"]

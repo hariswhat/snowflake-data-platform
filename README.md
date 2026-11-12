@@ -27,7 +27,7 @@ Azure Blob (orders hourly, customers and products daily)
   -> task graph, hourly when a stream has rows
        T_DIM_PRODUCT (type 1) | T_DIM_CUSTOMER (SCD2)
        -> T_FACT_ORDER_LINE (point-in-time keys, newest status)
-       -> T_DATA_QUALITY (7 checks)
+       -> T_DATA_QUALITY (8 checks)
   -> CORE  -> dynamic table DAILY_SALES (2 h lag)
   -> MART secure views (rows by region, PII masked)  -> Power BI
 ```
@@ -70,18 +70,16 @@ differs):
 | Customer versions / current | 4,475 / 3,000 |
 | Fact order lines | 80,867 |
 | Orders | 40,500 |
-| Stale CRM rows logged to `OPS.LATE_ARRIVAL` | 72 |
+| Stale CRM rows logged to `OPS.LATE_ARRIVAL` | 73 |
 | Lines on the unknown customer after 90 days | 0 |
 | Lines on the unknown product | 151 |
 | Net sales excluding cancelled | 57,412,014.97 |
 | Error-severity check failures, any day | 0 |
 
 Every order line is in the fact once, despite 812 duplicate events.
-Customers who arrived late were re-keyed. 72 of the 73 stale rows were
-logged and skipped. The 73rd arrived in the same export as a newer row for
-the same customer, so the newer one won within the batch (ADR-0003). The
-151 lines for unknown products stay on -1, and a warning check reports
-them.
+Customers who arrived late were re-keyed. All 73 stale rows were logged and
+skipped. The 151 lines for unknown products stay on -1, and a warning check
+reports them.
 
 The tests (`tests/test_pipeline.py`, at 30 days and a fifth of the scale)
 compare CORE with `tests/expected.py`:
@@ -93,7 +91,15 @@ compare CORE with `tests/expected.py`:
 - the customer version each line points at;
 - daily sales totals.
 
-They also reload a day of files and check that CORE does not change.
+They also check that:
+
+- reloading a day of files changes neither CORE nor the stale-row log;
+- four days loaded into one run (a stopped graph) give the same customer
+  versions as the model applying them as one batch, intermediate changes
+  included;
+- a status tie between runs goes to the later step;
+- an incomplete order event goes to `OPS.REJECTED_EVENT` instead of
+  failing the fact task.
 
 ## Cost
 
@@ -107,8 +113,9 @@ The run times in it are estimates (open issue 4):
 | Ad hoc | 10.0 | 20 |
 
 The two alerts are serverless. On the transform warehouse, their 48 checks
-a day would cost 25.2 credits a month, more than the task graph. Snowpipe is
-reported in `OPS.CREDITS_BY_DAY`, not estimated
+a day would cost up to 25.2 credits a month if each resumed it, against
+15.8 for the task graph. Snowpipe and the serverless alerts are not
+estimated; Snowpipe is reported in `OPS.CREDITS_BY_DAY`
 ([docs/cost-estimate.md](docs/cost-estimate.md)).
 
 ## Decisions
@@ -165,16 +172,18 @@ Deploying needs a Snowflake account and an Azure storage account. See
 - **Stale CRM rows are logged, not applied.** Correcting history is manual
   (runbook section 6).
 - **Products are type 1.** Sales by category use today's category.
-- **Late customers re-key automatically for 7 days.** After a longer
-  outage, the re-key is run by hand. A stream unread for 14 days goes
-  stale, and recovery is a reload from RAW (runbook section 5). Neither
-  is detected automatically.
+- **The fact re-key looks back 7 days of customer changes.** If the fact
+  task fails for longer while the customer task succeeds, the re-key is run
+  by hand. A stream unread for 14 days goes stale, and recovery is a reload
+  from RAW (runbook section 5). Neither is detected automatically.
 - **No hard limit on serverless spend.** Monitors cover warehouses only
   (open issue 3).
 - **The cost model's run times and BI hours are estimates** until a month
   of `OPS.CREDITS_BY_DAY` exists.
 - **Region access is a table of rows maintained by hand** (open issue 6).
 - **Alerts are e-mail to one address.** There is no paging.
+- **dev and prd share one account.** The deploy roles can read account-wide
+  usage and set masking policies anywhere in it (open issue 9).
 
 ## What I'd change at 10x
 

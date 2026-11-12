@@ -18,7 +18,10 @@ fresh clone.
 - **A simulation stands in for what DuckDB lacks.** Snowpipe is a loader
   that inserts what each pipe's COPY would. A stream is a table holding rows
   added since the last committed run. The simulation runs the task graph
-  once per day of generated files.
+  once per day of generated files. Separate tests cover:
+  - several days in one run (a stopped graph);
+  - a status tie split across two runs;
+  - an incomplete event.
 - **An independent model.** `tests/expected.py` works out in plain Python,
   from the landing files, what CORE should hold: customer versions, stale
   rows, statuses, lines and the version each line points at. The tests
@@ -27,8 +30,10 @@ fresh clone.
 - **Snowflake-only scripts are checked statically.** Every script renders
   for every environment and parses. Pipe columns match the tables and the
   generator's files. The task graph matches the simulation's order. Every
-  warehouse has a monitor. Every schema is granted through an access role.
-  The MART views run on DuckDB.
+  warehouse has a monitor. Every schema except GOVERNANCE (policies, which nobody reads) is granted
+  through an access role. Every MART view carries the row policy in its
+  CREATE, and the policy's argument is not shadowed by a column. PII columns
+  are tagged. The MART views run on DuckDB.
 
 ## Consequences
 
@@ -40,8 +45,10 @@ fresh clone.
   in the transforms that DuckDB lacks (for example `FLATTEN`), which ADR-0001
   avoided.
 - What this cannot catch: Snowflake behaviour that differs from DuckDB's,
-  such as MERGE's handling of a target row matched twice (an error in both
-  here), task scheduling, stream staleness, policies, grants, and pipes. The
-  first deployment to dev is the real check of those (open issue 1).
+  task scheduling, stream staleness, policies, grants, privileges, and
+  pipes. The review that found the shadowed policy argument and the
+  missing `APPLY MASKING POLICY` grant found them by reading, not by a
+  test. The first deployment to dev is the real check of those (open
+  issue 1).
 - The model agreeing with the SQL proves they implement the same rules. It
   does not prove the rules are what the business wants.

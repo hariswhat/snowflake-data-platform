@@ -36,9 +36,10 @@ Inputs (`cost/inputs.yml`):
 | BI (1 h a day dev, 6 h a day prd) | 32.5 | 365.0 | WH_BI, XSMALL dev, SMALL prd |
 | Ad hoc | 20.0 | 10.0 | WH_ADHOC, XSMALL |
 | **Total, warehouses** | **80.3** | **402.8** | |
-| Not incurred: the two alerts on WH_TRANSFORM | 25.2 | 25.2 | serverless instead |
+| Not incurred: the two alerts on WH_TRANSFORM, upper bound | 25.2 | 25.2 | serverless instead |
 
-Monitor quotas (`deploy/envs/<env>.json`) against these:
+Monitor quotas (`deploy/envs/<env>.json`, applied by
+`migrations/admin/R__warehouse_sizes_and_quotas.sql`) against these:
 
 | Monitor | dev quota | prd quota | prd estimate |
 | --- | ---: | ---: | ---: |
@@ -70,8 +71,11 @@ moves the total more than any change to the transforms. The first month's
 `OPS.CREDITS_BY_DAY` decides whether SMALL is needed (open issue 4).
 
 The alerts decision (ADR-0005): on the transform warehouse, 48 checks a day
-would each pay the 60-second minimum. That is 25.2 credits a month, more
-than the task graph's 15.8.
+could each pay the 60-second minimum. That is at most 25.2 credits a month,
+and about half that if the two alerts shared each resume, against the task
+graph's 15.8. Serverless alerts bill for the compute they use. Their cost
+is not estimated here, and the first month of metering decides whether the
+choice was right.
 
 ## Checking the estimate
 

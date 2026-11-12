@@ -48,9 +48,10 @@ new versioned script with `ALTER MASKING POLICY ... SET BODY ->` or
 Roles, warehouses, monitors and integrations are in `migrations/admin` and
 are deployed by hand (ADR-0006). A new warehouse needs a resource monitor
 and auto-suspend; `test_every_warehouse_has_a_monitor_and_auto_suspend`
-checks both. Change sizes and quotas in `deploy/envs/<env>.json`, then
-rerun `python -m cost.model` for both environments into
-`docs/measured/cost-<env>.txt`.
+checks both. Change sizes and quotas in `deploy/envs/<env>.json`. The
+repeatable `R__warehouse_sizes_and_quotas.sql` applies them on the next
+admin deployment. Then rerun `python -m cost.model` for both environments
+into `docs/measured/cost-<env>.txt`.
 
 ## Style
 
