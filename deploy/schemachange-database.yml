@@ -1,0 +1,19 @@
+# schemachange config for the objects inside RIDGELINE_<env>. The workflow
+# passes the environment's values with --vars (deploy/envs/<env>.json) and
+# the change history table with --change-history-table.
+config-version: 1
+root-folder: migrations/database
+modules-folder: transform
+create-change-history-table: true
+autocommit: false
+vars:
+  # Checks the data quality task runs, in order. tests/test_migrations.py
+  # fails if this list and the files in transform/dq/ differ.
+  dq_checks:
+    - {name: dim_customer_one_current_version, severity: error}
+    - {name: dim_customer_versions_do_not_overlap, severity: error}
+    - {name: fact_customer_key_resolves, severity: error}
+    - {name: fact_order_line_unique, severity: error}
+    - {name: fact_status_matches_order_status, severity: error}
+    - {name: fact_unknown_customer_after_two_days, severity: warn}
+    - {name: fact_unknown_product, severity: warn}

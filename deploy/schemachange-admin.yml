@@ -1,0 +1,7 @@
+# schemachange config for account-level objects: roles, warehouses, resource
+# monitors, the database and the integrations. Run by the admin workflow with
+# a user that has SECURITYADMIN, SYSADMIN and ACCOUNTADMIN (docs/runbook).
+config-version: 1
+root-folder: migrations/admin
+create-change-history-table: true
+autocommit: false
