@@ -1,0 +1,49 @@
+name: deploy-env
+
+# One environment's database deployment; called by deploy.yml.
+on:
+  workflow_call:
+    inputs:
+      env:
+        type: string
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.env }}   # prd has required reviewers
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -r requirements-deploy.txt
+      - name: Snowflake connection (key-pair auth for the deploy service user)
+        env:
+          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+        run: |
+          ENV_UPPER=$(echo "${{ inputs.env }}" | tr a-z A-Z)
+          mkdir -p ~/.snowflake
+          printf '%s\n' "$SNOWFLAKE_PRIVATE_KEY" > ~/.snowflake/deploy.p8
+          chmod 600 ~/.snowflake/deploy.p8
+          cat > ~/.snowflake/connections.toml <<TOML
+          [ridgeline]
+          account = "${{ vars.SNOWFLAKE_ACCOUNT }}"
+          user = "SVC_RIDGELINE_${ENV_UPPER}_DEPLOY"
+          role = "RL_${ENV_UPPER}_DEPLOYER"
+          warehouse = "WH_${ENV_UPPER}_TRANSFORM"
+          database = "RIDGELINE_${ENV_UPPER}"
+          authenticator = "SNOWFLAKE_JWT"
+          private_key_file = "$HOME/.snowflake/deploy.p8"
+          TOML
+          chmod 600 ~/.snowflake/connections.toml
+      - name: schemachange deploy
+        run: |
+          ENV_UPPER=$(echo "${{ inputs.env }}" | tr a-z A-Z)
+          schemachange deploy \
+            --config-folder deploy \
+            --config-file-name schemachange-database.yml \
+            --connections-file-path ~/.snowflake/connections.toml \
+            --connection-name ridgeline \
+            --change-history-table "RIDGELINE_${ENV_UPPER}.OPS.SCHEMACHANGE_HISTORY" \
+            --vars "$(cat deploy/envs/${{ inputs.env }}.json)"

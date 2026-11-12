@@ -1,0 +1,50 @@
+name: admin
+
+# Account-level objects: roles, warehouses, resource monitors, the database,
+# integrations (migrations/admin). Run by hand for one environment, with a
+# user that holds SECURITYADMIN, SYSADMIN and ACCOUNTADMIN; the environment
+# admin-<env> has required reviewers. docs/runbook section 1.
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        type: choice
+        options: [dev, prd]
+        required: true
+
+jobs:
+  admin:
+    runs-on: ubuntu-latest
+    environment: admin-${{ inputs.env }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -r requirements-deploy.txt
+      - name: Snowflake connection
+        env:
+          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_ADMIN_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.snowflake
+          printf '%s\n' "$SNOWFLAKE_PRIVATE_KEY" > ~/.snowflake/admin.p8
+          chmod 600 ~/.snowflake/admin.p8
+          cat > ~/.snowflake/connections.toml <<TOML
+          [ridgeline_admin]
+          account = "${{ vars.SNOWFLAKE_ACCOUNT }}"
+          user = "SVC_RIDGELINE_ADMIN"
+          role = "ACCOUNTADMIN"
+          authenticator = "SNOWFLAKE_JWT"
+          private_key_file = "$HOME/.snowflake/admin.p8"
+          TOML
+          chmod 600 ~/.snowflake/connections.toml
+      - name: schemachange deploy (admin)
+        run: |
+          ENV_UPPER=$(echo "${{ inputs.env }}" | tr a-z A-Z)
+          schemachange deploy \
+            --config-folder deploy \
+            --config-file-name schemachange-admin.yml \
+            --connections-file-path ~/.snowflake/connections.toml \
+            --connection-name ridgeline_admin \
+            --change-history-table "RIDGELINE_ADMIN.SCHEMACHANGE.CHANGE_HISTORY_${ENV_UPPER}" \
+            --vars "$(cat deploy/envs/${{ inputs.env }}.json)"

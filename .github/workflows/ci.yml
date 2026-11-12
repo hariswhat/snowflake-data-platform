@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: sqlfluff lint transform
+      - run: python -m pytest
+      # The full 90 days on DuckDB; exits 1 if an error-severity check fails on any day.
+      - run: python -m sim.run --days 90 --scale 1.0 > sim-summary.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sim-summary
+          path: sim-summary.json

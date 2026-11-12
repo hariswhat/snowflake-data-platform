@@ -1,0 +1,35 @@
+name: deploy
+
+# Database objects (migrations/database) with schemachange: dev on every push
+# to main, prd after the environment's required reviewers approve. Account
+# objects (migrations/admin) are deployed by admin.yml, by hand.
+on:
+  push:
+    branches: [main]
+    paths: [migrations/database/**, transform/**, deploy/**]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-database
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  # Skipped until the repository variable SNOWFLAKE_ACCOUNT is set, so a fork
+  # or a copy without a Snowflake account still runs CI cleanly.
+  dev:
+    needs: ci
+    if: ${{ vars.SNOWFLAKE_ACCOUNT != '' }}
+    uses: ./.github/workflows/deploy-env.yml
+    with:
+      env: dev
+    secrets: inherit
+
+  prd:
+    needs: dev
+    uses: ./.github/workflows/deploy-env.yml
+    with:
+      env: prd
+    secrets: inherit
