@@ -1,0 +1,29 @@
+# Inputs to cost/model.py. Two kinds:
+#   facts: Snowflake's published credit rates per warehouse size (standard
+#          warehouses) and its billing rules, and what this repo's SQL and
+#          generator define (schedules, file counts);
+#   estimates: run times and BI hours nobody has measured yet. They are
+#          placeholders until OPS.CREDITS_BY_DAY has a month of real numbers
+#          (docs/cost-estimate.md, open issue 4).
+
+facts:
+  credits_per_hour: {XSMALL: 1, SMALL: 2, MEDIUM: 4, LARGE: 8, XLARGE: 16}
+  min_billed_seconds_per_resume: 60
+  # from the SQL
+  task_graph_schedule_runs_per_day: 24      # CRON 15 * * * * in R__tasks.sql
+  transform_auto_suspend_s: 60              # admin V1.0.1
+  bi_auto_suspend_s: 300                    # admin V1.0.1
+  alert_checks_per_day: 48                  # two alerts, hourly, R__ops.sql
+  # from the generator (hours with order files; CRM and catalogue files land
+  # in the first hour); the root task's WHEN skips hours with no new rows
+  hours_with_files_per_day: 18
+
+estimates:
+  task_graph_run_s: 45          # all four tasks, one graph run
+  dynamic_table_refreshes_per_day: 18
+  dynamic_table_refresh_s: 20
+  alert_check_s: 3              # one alert query, if it ran on a warehouse
+  days_per_month: 30
+  # differ by environment
+  bi_active_hours_per_day: {dev: 1, prd: 6}     # hours with queries
+  adhoc_hours_per_month: {dev: 20, prd: 10}

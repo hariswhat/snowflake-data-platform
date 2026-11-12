@@ -3,10 +3,11 @@
   "retention_days": 7,
   "transform_wh_size": "XSMALL",
   "bi_wh_size": "SMALL",
-  "transform_monthly_credits": 60,
-  "bi_monthly_credits": 200,
-  "adhoc_monthly_credits": 40,
+  "transform_monthly_credits": 40,
+  "bi_monthly_credits": 400,
+  "adhoc_monthly_credits": 20,
   "storage_account": "stridgelineprd",
   "landing_queue": "snowpipe-landing",
-  "azure_tenant_id": "00000000-0000-0000-0000-000000000000"
+  "azure_tenant_id": "00000000-0000-0000-0000-000000000000",
+  "alert_email": "data-platform-prd@ridgeline.example"
 }

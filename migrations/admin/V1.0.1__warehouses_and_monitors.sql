@@ -31,8 +31,8 @@ GRANT USAGE, OPERATE ON WAREHOUSE WH_{{ env }}_TRANSFORM TO ROLE RL_{{ env }}_DE
 GRANT USAGE ON WAREHOUSE WH_{{ env }}_BI TO ROLE RL_{{ env }}_ANALYST;
 GRANT USAGE ON WAREHOUSE WH_{{ env }}_ADHOC TO ROLE RL_{{ env }}_ENGINEER;
 
--- Resource monitors cover warehouses only. Snowpipe and serverless features
--- are watched through the budget query in OPS (V1.1.5 / R__ops_views.sql).
+-- Resource monitors cover warehouses only. Snowpipe's serverless credits are
+-- reported in OPS.CREDITS_BY_DAY (database migrations, R__ops.sql).
 USE ROLE ACCOUNTADMIN;
 
 CREATE RESOURCE MONITOR IF NOT EXISTS RM_{{ env }}_TRANSFORM

@@ -26,3 +26,12 @@ CREATE NOTIFICATION INTEGRATION IF NOT EXISTS NI_{{ env }}_LANDING
 
 GRANT USAGE ON INTEGRATION SI_{{ env }}_LANDING TO ROLE RL_{{ env }}_DEPLOYER;
 GRANT USAGE ON INTEGRATION NI_{{ env }}_LANDING TO ROLE RL_{{ env }}_DEPLOYER;
+
+-- E-mail for the failure alerts (R__ops.sql). Recipients must be verified
+-- users of the account.
+CREATE NOTIFICATION INTEGRATION IF NOT EXISTS NI_{{ env }}_EMAIL
+    TYPE = EMAIL
+    ENABLED = TRUE
+    ALLOWED_RECIPIENTS = ('{{ alert_email }}');
+
+GRANT USAGE ON INTEGRATION NI_{{ env }}_EMAIL TO ROLE RL_{{ env }}_DEPLOYER;

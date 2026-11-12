@@ -4,9 +4,10 @@
   "transform_wh_size": "XSMALL",
   "bi_wh_size": "XSMALL",
   "transform_monthly_credits": 40,
-  "bi_monthly_credits": 30,
+  "bi_monthly_credits": 40,
   "adhoc_monthly_credits": 30,
   "storage_account": "stridgelinedev",
   "landing_queue": "snowpipe-landing",
-  "azure_tenant_id": "00000000-0000-0000-0000-000000000000"
+  "azure_tenant_id": "00000000-0000-0000-0000-000000000000",
+  "alert_email": "data-platform-dev@ridgeline.example"
 }
